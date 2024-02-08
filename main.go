@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -15,6 +17,10 @@ import (
 
 type SigninResponseDto struct {
 	AccessToken string `json:"accessToken"`
+}
+
+type VerifyResponseDto struct {
+	NfsUrl string `json:"nfsUrl"`
 }
 
 type ApiResponse struct {
@@ -72,6 +78,40 @@ func generateToken(username string) (string, error) {
 	return signedToken, nil
 }
 
+func verifyTokenMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		authorizationHeader := c.Request().Header.Get("Authorization")
+
+		if authorizationHeader == "" {
+			return echo.NewHTTPError(http.StatusUnauthorized, "Token not provided")
+		}
+
+		accessToken := strings.Replace(authorizationHeader, "Bearer ", "", 1)
+		authTokenClaims := &AuthTokenClaims{}
+		token, err := jwt.ParseWithClaims(accessToken, authTokenClaims, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("There was an error")
+			}
+			return []byte(os.Getenv("SECRET_KEY")), nil
+		})
+
+		if err != nil {
+			return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
+		}
+
+		if !token.Valid {
+			return echo.NewHTTPError(http.StatusUnauthorized, "Token is not valid")
+		}
+
+		c.Set("user", authTokenClaims)
+		/* 미들웨어에서 저장한 user 사용하는 방법
+		user := c.Get("user").(*AuthTokenClaims)
+		user.Username, user.Name 등등 사용 가능
+		*/
+		return next(c)
+	}
+}
+
 func loginHandler(c echo.Context) error {
 	var user User
 
@@ -92,6 +132,12 @@ func loginHandler(c echo.Context) error {
 	}
 }
 
+func verifyHandler(c echo.Context) error {
+	VerifyResponseDto := VerifyResponseDto{NfsUrl: "test"}
+
+	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: VerifyResponseDto, Message: "Authentication Success"})
+}
+
 func main() {
 	loadEnv()
 
@@ -101,6 +147,7 @@ func main() {
 	e.Use(middleware.Recover())
 
 	e.POST("/api/auth/signin", loginHandler)
+	e.GET("/api/auth/verify", verifyHandler, verifyTokenMiddleware)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

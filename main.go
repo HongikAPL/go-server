@@ -1,10 +1,22 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
+
+type ResponseDto struct {
+	Result string `json:"result"`
+}
+
+type Response struct {
+	Status int `json:"status"`
+	Data interface{} `json:"data"`
+	Message string `json:"message"`
+}
 
 type User struct {
 	Username string `json:"username"`
@@ -16,25 +28,31 @@ const (
 	validPassword = "test"
 )
 
-func loginHandler(rw http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost{
-		var user User
-		json.NewDecoder(r.Body).Decode(&user)
+func loginHandler(c echo.Context) error {
+	var user User
+	if err := c.Bind(&user); err != nil {
+		return c.JSON(http.StatusBadRequest, "Invalid request payload")
+	}
 
-		if user.Username == validUsername && user.Password == validPassword {
-			fmt.Fprint(rw, "Authentication Success")
-		} else {
-			http.Error(rw, "Authentication failed. Invalid username or password", http.StatusBadRequest)
-		}
+	if user.Username == validUsername && user.Password == validPassword {
+		responseDto := ResponseDto{Result : "성공"}
+		return c.JSON(http.StatusOK, Response{Status: http.StatusOK, Data: responseDto, Message: "Authentication Success"})
 	} else {
-		http.Error(rw, "Method 는 Post 입니다.", http.StatusMethodNotAllowed)
+		return echo.NewHTTPError(http.StatusBadRequest, "Authentication failed. Invalid username or password")
 	}
 }
 
 func main() {
-	mux := http.NewServeMux()
+	e := echo.New()
 
-	mux.HandleFunc("/api/auth/login", loginHandler)
+	// 미들웨어 설정
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+
+	// 라우트 설정
+	e.POST("/api/auth/login", loginHandler)
+
+	// 서버 시작
 	fmt.Println("Server is running on http://localhost:8080")
-	http.ListenAndServe(":8080", mux) // mux : handler Handler
+	e.Start(":8080")
 }

@@ -8,19 +8,6 @@ services:
     ports:
       - "8080:8080"
     restart: always
-    depends_on:
-      - nfs-server
-  nfs-server:
-    image: itsthenetwork/nfs-server-alpine:12
-    container_name: nfs-server
-    platform: linux/amd64
-    ports:
-      - "2049:2049"
-    environment:
-      - SHARED_DIRECTORY=/exports
-      - PERMITTED=*
-      - READ_ONLY=false
-      - SYNC=async
     volumes:
       - type: bind
         source: /Users/younggyo/Documents/mount

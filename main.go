@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -20,7 +21,8 @@ type SigninResponseDto struct {
 }
 
 type VerifyResponseDto struct {
-	NfsUrl string `json:"nfsUrl"`
+	NfsUrl    string `json:"nfsUrl"`
+	AccessUrl string `json:"accessUrl"`
 }
 
 type ApiResponse struct {
@@ -132,10 +134,43 @@ func loginHandler(c echo.Context) error {
 	}
 }
 
-func verifyHandler(c echo.Context) error {
-	VerifyResponseDto := VerifyResponseDto{NfsUrl: "test"}
+func getServerIPAddress() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
 
-	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: VerifyResponseDto, Message: "Authentication Success"})
+	for _, address := range addrs {
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+			return ipnet.IP.String()
+		}
+	}
+
+	return ""
+}
+
+func generateNfsUrl() string {
+	serverIP := getServerIPAddress()
+	if serverIP == "" {
+		return "error_getting_ip"
+	}
+
+	return serverIP + "/Users/younggyo/Documents/mount"
+}
+
+func generateAccessUrl(nfsUrl string) string {
+	return "http://localhost:8080/mount?nfsUrl=" + nfsUrl
+}
+
+func verifyHandler(c echo.Context) error {
+	nfsUrl := generateNfsUrl()
+	accessUrl := generateAccessUrl(nfsUrl)
+	verifyResponseDto := VerifyResponseDto{
+		NfsUrl:    nfsUrl,
+		AccessUrl: accessUrl,
+	}
+
+	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: verifyResponseDto, Message: "NFS URL 전송 성공"})
 }
 
 func main() {

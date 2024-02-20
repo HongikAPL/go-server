@@ -135,20 +135,20 @@ func loginHandler(c echo.Context) error {
 }
 
 func getServerIPAddress() (string, error) {
-	metaDataURL := "http://169.254.169.254/latest/meta-data/public-ipv4"
-
-	resp, err := http.Get(metaDataURL)
+	// 외부 서비스로부터 현재 서버의 공개 IP 주소를 얻기
+	resp, err := http.Get("https://api64.ipify.org?format=text")
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	// 응답에서 IP 주소 읽기
+	ip, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	return string(body), nil
+	return string(ip), nil
 }
 
 func generateNfsUrl() string {

@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -134,28 +134,30 @@ func loginHandler(c echo.Context) error {
 	}
 }
 
-func getServerIPAddress() string {
-	addrs, err := net.InterfaceAddrs()
+func getServerIPAddress() (string, error) {
+	metaDataURL := "http://169.254.169.254/latest/meta-data/public-ipv4"
+
+	resp, err := http.Get(metaDataURL)
 	if err != nil {
-		return ""
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
 	}
 
-	for _, address := range addrs {
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
-			return ipnet.IP.String()
-		}
-	}
-
-	return ""
+	return string(body), nil
 }
 
 func generateNfsUrl() string {
-	serverIP := getServerIPAddress()
-	if serverIP == "" {
+	serverIP, err := getServerIPAddress()
+	if err != nil {
 		return "error_getting_ip"
 	}
 
-	return serverIP + "/Users/younggyo/Documents/mount"
+	return serverIP + ":/Users/younggyo/Documents/mount"
 }
 
 func generateAccessUrl(nfsUrl string) string {

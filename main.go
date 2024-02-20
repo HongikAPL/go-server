@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -135,31 +135,18 @@ func loginHandler(c echo.Context) error {
 }
 
 func getServerIPAddress() (string, error) {
-	interfaces, err := net.Interfaces()
+	resp, err := http.Get("https://api64.ipify.org?format=text")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	ip, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	// 각 인터페이스의 IP 주소 확인
-	for _, iface := range interfaces {
-		addrs, err := iface.Addrs()
-		if err != nil {
-			return "", err
-		}
-
-		// IPv4 주소 중에서 프라이빗 주소 찾기
-		for _, addr := range addrs {
-			switch v := addr.(type) {
-			case *net.IPNet:
-				// IPv4 주소가 프라이빗 주소인지 확인
-				if v.IP.To4() != nil && v.IP.IsPrivate() {
-					return v.IP.String(), nil
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("프라이빗 IPv4 주소를 찾을 수 없습니다.")
+	return string(ip), nil
 }
 
 func generateNfsUrl() string {

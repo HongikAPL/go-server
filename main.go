@@ -21,8 +21,7 @@ type SigninResponseDto struct {
 }
 
 type VerifyResponseDto struct {
-	NfsUrl    string `json:"nfsUrl"`
-	AccessUrl string `json:"accessUrl"`
+	NfsUrl string `json:"nfsUrl"`
 }
 
 type ApiResponse struct {
@@ -164,10 +163,8 @@ func generateAccessUrl(nfsUrl string) string {
 
 func verifyHandler(c echo.Context) error {
 	nfsUrl := generateNfsUrl()
-	accessUrl := generateAccessUrl(nfsUrl)
 	verifyResponseDto := VerifyResponseDto{
-		NfsUrl:    nfsUrl,
-		AccessUrl: accessUrl,
+		NfsUrl: nfsUrl,
 	}
 
 	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: verifyResponseDto, Message: "NFS URL 전송 성공"})

@@ -113,7 +113,7 @@ func verifyTokenMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-func loginHandler(c echo.Context) error {
+func signinHandler(c echo.Context) error {
 	var user User
 
 	if err := c.Bind(&user); err != nil {
@@ -154,11 +154,7 @@ func generateNfsUrl() string {
 		return "error_getting_ip"
 	}
 
-	return serverIP + ":/Users/younggyo/Documents/mount"
-}
-
-func generateAccessUrl(nfsUrl string) string {
-	return "http://localhost:8080/mount?nfsUrl=" + nfsUrl
+	return serverIP + ":/mnt/nfs_share"
 }
 
 func verifyHandler(c echo.Context) error {
@@ -178,7 +174,7 @@ func main() {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
-	e.POST("/api/auth/signin", loginHandler)
+	e.POST("/api/auth/signin", signinHandler)
 	e.GET("/api/auth/verify", verifyHandler, verifyTokenMiddleware)
 
 	e.Logger.Fatal(e.Start(":8080"))

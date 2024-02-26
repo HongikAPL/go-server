@@ -26,6 +26,8 @@ import (
 
 type SigninResponseDto struct {
 	AccessToken string `json:"accessToken"`
+	Otp         string `json:"otp"`
+	Key         []byte `json:"key"`
 }
 
 type VerifyResponseDto struct {
@@ -75,8 +77,8 @@ func generateRandomSecretKey(length int) []byte {
 
 func generateOTP(secretKeyBytes []byte) (string, error) {
 	otpURL, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "YourApp",
-		AccountName: "user@example.com",
+		Issuer:      "App Name",
+		AccountName: "test@example.com",
 		Secret:      secretKeyBytes,
 	})
 	if err != nil {
@@ -84,7 +86,7 @@ func generateOTP(secretKeyBytes []byte) (string, error) {
 		return "", err
 	}
 
-	fmt.Println("TOTP URL:", otpURL.URL())
+	fmt.Println("TOTP URL:\n", otpURL.URL())
 
 	secretKey := base32.StdEncoding.EncodeToString(secretKeyBytes)
 	secretKey = secretKey[:32]
@@ -116,7 +118,7 @@ func encrypt(data []byte, key []byte) ([]byte, error) {
 	return ciphertext, nil
 }
 
-func encryptFilesInFolder(key []byte) error {
+func encryptFilesInFolder(key []byte, otp string) error {
 	files, err := ioutil.ReadDir(folderPath)
 	if err != nil {
 		return err
@@ -134,49 +136,13 @@ func encryptFilesInFolder(key []byte) error {
 			return err
 		}
 
-		err = ioutil.WriteFile(filePath, encryptedData, os.ModePerm)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func decrypt(ciphertext []byte, key []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	iv := ciphertext[:aes.BlockSize]
-	data := ciphertext[aes.BlockSize:]
-
-	stream := cipher.NewCFBDecrypter(block, iv)
-	stream.XORKeyStream(data, data)
-
-	return data, nil
-}
-
-func decryptFilesInFolder(key []byte) error {
-	files, err := ioutil.ReadDir(folderPath)
-	if err != nil {
-		return err
-	}
-
-	for _, file := range files {
-		filePath := filepath.Join(folderPath, file.Name())
-		data, err := ioutil.ReadFile(filePath)
-		if err != nil {
+		newFolderPath := filepath.Join(folderPath, "/", otp)
+		if err := os.Mkdir(newFolderPath, os.ModePerm); err != nil {
 			return err
 		}
 
-		decryptedData, err := decrypt(data, key)
-		if err != nil {
-			return err
-		}
-
-		err = ioutil.WriteFile(filePath, decryptedData, os.ModePerm)
+		newFilePath := filepath.Join(newFolderPath, "/", file.Name())
+		err = ioutil.WriteFile(newFilePath, encryptedData, os.ModePerm)
 		if err != nil {
 			return err
 		}
@@ -207,6 +173,37 @@ func generateToken(username string) (string, error) {
 	}
 
 	return signedToken, nil
+}
+
+func signinHandler(c echo.Context) error {
+	var user User
+	secretKeyBytes := generateRandomSecretKey(32)
+	totp, err := generateOTP(secretKeyBytes)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "Failed to generate time-based OTP")
+	}
+
+	fmt.Println("Current TOTP Code:", totp)
+
+	if err := encryptFilesInFolder(secretKeyBytes, totp); err != nil {
+		return c.JSON(http.StatusBadRequest, "Error encryption files")
+	}
+
+	if err := c.Bind(&user); err != nil {
+		return c.JSON(http.StatusBadRequest, "Invalid request payload")
+	}
+
+	if user.Username == validUsername && user.Password == validPassword {
+		accessToken, err := generateToken(user.Username)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, "Failed to generate JWT token")
+		}
+
+		SigninResponseDto := SigninResponseDto{AccessToken: accessToken, Otp: totp, Key: secretKeyBytes}
+		return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: SigninResponseDto, Message: "Authentication Success"})
+	} else {
+		return echo.NewHTTPError(http.StatusBadRequest, "Authentication failed. Invalid username or password")
+	}
 }
 
 func verifyTokenMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
@@ -243,26 +240,6 @@ func verifyTokenMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-func signinHandler(c echo.Context) error {
-	var user User
-
-	if err := c.Bind(&user); err != nil {
-		return c.JSON(http.StatusBadRequest, "Invalid request payload")
-	}
-
-	if user.Username == validUsername && user.Password == validPassword {
-		accessToken, err := generateToken(user.Username)
-		if err != nil {
-			return c.JSON(http.StatusInternalServerError, "Failed to generate JWT token")
-		}
-
-		SigninResponseDto := SigninResponseDto{AccessToken: accessToken}
-		return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: SigninResponseDto, Message: "Authentication Success"})
-	} else {
-		return echo.NewHTTPError(http.StatusBadRequest, "Authentication failed. Invalid username or password")
-	}
-}
-
 func getServerIPAddress() (string, error) {
 	resp, err := http.Get("https://api64.ipify.org?format=text")
 	if err != nil {
@@ -278,17 +255,21 @@ func getServerIPAddress() (string, error) {
 	return string(ip), nil
 }
 
-func generateNfsUrl() string {
+func generateNfsUrl() (string, error) {
 	serverIP, err := getServerIPAddress()
 	if err != nil {
-		return "error_getting_ip"
+		return "", err
 	}
 
-	return serverIP + ":/mnt/nfs_share"
+	return serverIP + ":/mnt/nfs_share", nil
 }
 
 func verifyHandler(c echo.Context) error {
-	nfsUrl := generateNfsUrl()
+	nfsUrl, err := generateNfsUrl()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, err)
+	}
+
 	verifyResponseDto := VerifyResponseDto{
 		NfsUrl: nfsUrl,
 	}
@@ -298,25 +279,6 @@ func verifyHandler(c echo.Context) error {
 
 func main() {
 	loadEnv()
-	secretKeyBytes := generateRandomSecretKey(32)
-
-	totp, err := generateOTP(secretKeyBytes)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("Current TOTP Code:", totp)
-
-	err = encryptFilesInFolder(secretKeyBytes)
-	if err != nil {
-		fmt.Println("Error encrypting files:", err)
-		return
-	}
-
-	err = decryptFilesInFolder(secretKeyBytes)
-	if err != nil {
-		fmt.Println("Error encrypting files:", err)
-		return
-	}
 
 	e := echo.New()
 

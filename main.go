@@ -1,13 +1,18 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base32"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -49,6 +54,7 @@ type AuthTokenClaims struct {
 const (
 	validUsername = "test"
 	validPassword = "test"
+	folderPath    = "./nfs_shared"
 )
 
 func loadEnv() {
@@ -58,23 +64,16 @@ func loadEnv() {
 	}
 }
 
-func generateRandomSecretKey(length int) ([]byte, error) {
-	randomBytes := make([]byte, length)
-	_, err := rand.Read(randomBytes)
-	if err != nil {
-		return nil, err
-	}
+func generateRandomSecretKey(length int) []byte {
+	currentTime := time.Now().UnixNano()
+	randomSecretKey := make([]byte, length)
 
-	return randomBytes, nil
+	binary.PutVarint(randomSecretKey, currentTime)
+
+	return randomSecretKey
 }
 
-func generateOTP() {
-	secretKeyBytes, err := generateRandomSecretKey(20)
-
-	if err != nil {
-		fmt.Println("Error generating random secret key:", err)
-		return
-	}
+func generateOTP(secretKeyBytes []byte) (string, error) {
 	otpURL, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      "YourApp",
 		AccountName: "user@example.com",
@@ -82,22 +81,108 @@ func generateOTP() {
 	})
 	if err != nil {
 		fmt.Println("Error generating TOTP URL:", err)
-		return
+		return "", err
 	}
 
 	fmt.Println("TOTP URL:", otpURL.URL())
 
 	secretKey := base32.StdEncoding.EncodeToString(secretKeyBytes)
+	secretKey = secretKey[:32]
 
-	secretKey = secretKey[:20]
-
-	otp, err := totp.GenerateCode(secretKey, time.Now())
+	totp, err := totp.GenerateCode(secretKey, time.Now())
 	if err != nil {
 		fmt.Println("Error generating TOTP code:", err)
-		return
+		return "", err
 	}
 
-	fmt.Println("Current TOTP Code:", otp)
+	return totp, nil
+}
+
+func encrypt(data []byte, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	ciphertext := make([]byte, aes.BlockSize+len(data))
+	iv := ciphertext[:aes.BlockSize]
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return nil, err
+	}
+
+	stream := cipher.NewCFBEncrypter(block, iv)
+	stream.XORKeyStream(ciphertext[aes.BlockSize:], data)
+
+	return ciphertext, nil
+}
+
+func encryptFilesInFolder(key []byte) error {
+	files, err := ioutil.ReadDir(folderPath)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		filePath := filepath.Join(folderPath, file.Name())
+		data, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			return err
+		}
+
+		encryptedData, err := encrypt(data, key)
+		if err != nil {
+			return err
+		}
+
+		err = ioutil.WriteFile(filePath, encryptedData, os.ModePerm)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func decrypt(ciphertext []byte, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	iv := ciphertext[:aes.BlockSize]
+	data := ciphertext[aes.BlockSize:]
+
+	stream := cipher.NewCFBDecrypter(block, iv)
+	stream.XORKeyStream(data, data)
+
+	return data, nil
+}
+
+func decryptFilesInFolder(key []byte) error {
+	files, err := ioutil.ReadDir(folderPath)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		filePath := filepath.Join(folderPath, file.Name())
+		data, err := ioutil.ReadFile(filePath)
+		if err != nil {
+			return err
+		}
+
+		decryptedData, err := decrypt(data, key)
+		if err != nil {
+			return err
+		}
+
+		err = ioutil.WriteFile(filePath, decryptedData, os.ModePerm)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func generateToken(username string) (string, error) {
@@ -213,7 +298,25 @@ func verifyHandler(c echo.Context) error {
 
 func main() {
 	loadEnv()
-	generateOTP()
+	secretKeyBytes := generateRandomSecretKey(32)
+
+	totp, err := generateOTP(secretKeyBytes)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Current TOTP Code:", totp)
+
+	err = encryptFilesInFolder(secretKeyBytes)
+	if err != nil {
+		fmt.Println("Error encrypting files:", err)
+		return
+	}
+
+	err = decryptFilesInFolder(secretKeyBytes)
+	if err != nil {
+		fmt.Println("Error encrypting files:", err)
+		return
+	}
 
 	e := echo.New()
 

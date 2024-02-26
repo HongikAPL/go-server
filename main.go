@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base32"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -14,6 +16,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/pquerna/otp/totp"
 )
 
 type SigninResponseDto struct {
@@ -53,6 +56,48 @@ func loadEnv() {
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
+}
+
+func generateRandomSecretKey(length int) ([]byte, error) {
+	randomBytes := make([]byte, length)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return randomBytes, nil
+}
+
+func generateOTP() {
+	secretKeyBytes, err := generateRandomSecretKey(20)
+
+	if err != nil {
+		fmt.Println("Error generating random secret key:", err)
+		return
+	}
+	otpURL, err := totp.Generate(totp.GenerateOpts{
+		Issuer:      "YourApp",
+		AccountName: "user@example.com",
+		Secret:      secretKeyBytes,
+	})
+	if err != nil {
+		fmt.Println("Error generating TOTP URL:", err)
+		return
+	}
+
+	fmt.Println("TOTP URL:", otpURL.URL())
+
+	secretKey := base32.StdEncoding.EncodeToString(secretKeyBytes)
+
+	secretKey = secretKey[:20]
+
+	otp, err := totp.GenerateCode(secretKey, time.Now())
+	if err != nil {
+		fmt.Println("Error generating TOTP code:", err)
+		return
+	}
+
+	fmt.Println("Current TOTP Code:", otp)
 }
 
 func generateToken(username string) (string, error) {
@@ -168,6 +213,7 @@ func verifyHandler(c echo.Context) error {
 
 func main() {
 	loadEnv()
+	generateOTP()
 
 	e := echo.New()
 

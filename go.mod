@@ -4,6 +4,8 @@ go 1.21.6
 
 require github.com/labstack/echo/v4 v4.11.4
 
+require github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
+
 require (
 	dario.cat/mergo v1.0.0 // indirect
 	github.com/bep/godartsass v1.2.0 // indirect
@@ -24,6 +26,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.1.1 // indirect
+	github.com/pquerna/otp v1.4.0
 	github.com/spf13/afero v1.11.0 // indirect
 	github.com/tdewolff/parse/v2 v2.7.11 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect

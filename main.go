@@ -4,12 +4,14 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	crand "crypto/rand"
 	"encoding/base32"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	mrand "math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -62,6 +64,10 @@ const (
 	folderPath    = "./nfs_shared"
 )
 
+var (
+	globalSeed int64
+)
+
 func loadEnv() {
 	err := godotenv.Load()
 	if err != nil {
@@ -70,47 +76,76 @@ func loadEnv() {
 }
 
 func binaryRead(seed interface{}) error {
-	return binary.Read(rand.Reader, binary.BigEndian, seed)
+	return binary.Read(crand.Reader, binary.BigEndian, seed)
 }
 
 func generateRandomSeed() (int64, error) {
 	var seed int64
 	err := binaryRead(&seed)
+	setGlobalSeed(seed)
 	return seed, err
 }
 
-func generateRandomSecretKey(length int) []byte {
-	currentTime := time.Now().UnixNano()
-	randomSecretKey := make([]byte, length)
+func setGlobalSeed(seed int64) {
+	globalSeed = seed
+	fmt.Println("Current Seed Code:", globalSeed)
+}
 
-	binary.PutVarint(randomSecretKey, currentTime)
+func generateRandomSecretKey() ([]byte, error) {
+	mrand.Seed(globalSeed)
+	randomSecretKey := make([]byte, 32)
 
-	return randomSecretKey
+	_, err := crand.Read(randomSecretKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return randomSecretKey, nil
 }
 
 func generateOTP(secretKeyBytes []byte) (string, error) {
-	otpURL, err := totp.Generate(totp.GenerateOpts{
-		Issuer:      "App Name",
-		AccountName: "test@example.com",
-		Secret:      secretKeyBytes,
-	})
-	if err != nil {
-		fmt.Println("Error generating TOTP URL:", err)
-		return "", err
-	}
+	// otpURL, err := totp.Generate(totp.GenerateOpts{
+	// 	Issuer:      "App Name",
+	// 	AccountName: "test@example.com",
+	// 	Secret:      secretKeyBytes,
+	// })
+	// if err != nil {
+	// 	fmt.Println("Error generating TOTP URL:", err)
+	// 	return "", err
+	// }
 
-	fmt.Println("TOTP URL:\n", otpURL.URL())
-
+	// fmt.Println("TOTP URL:\n", otpURL.URL())
 	secretKey := base32.StdEncoding.EncodeToString(secretKeyBytes)
 	secretKey = secretKey[:32]
 
-	totp, err := totp.GenerateCode(secretKey, time.Now())
+	fixedTime := time.Unix((time.Now().Unix()/30)*30, 0)
+
+	totp, err := totp.GenerateCode(secretKey, fixedTime)
 	if err != nil {
 		fmt.Println("Error generating TOTP code:", err)
 		return "", err
 	}
 
 	return totp, nil
+}
+
+func seedHandler(c echo.Context) error {
+	seed, err := generateRandomSeed()
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "Failed to generate time-based Seed")
+	}
+
+	secretKeyBytes, err := generateRandomSecretKey()
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "Failed to generate time-based Seed")
+	}
+
+	totp, err := generateOTP(secretKeyBytes)
+	fmt.Println("totp :", totp)
+
+	seedResponseDto := SeedResponseDto{Seed: seed}
+
+	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: seedResponseDto, Message: "Get Seed Success"})
 }
 
 func encrypt(data []byte, key []byte) ([]byte, error) {
@@ -188,21 +223,13 @@ func generateToken(username string) (string, error) {
 	return signedToken, nil
 }
 
-func seedHandler(c echo.Context) error {
-	seed, err := generateRandomSeed()
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, "Failed to generate time-based Seed")
-	}
-
-	seedResponseDto := SeedResponseDto{Seed: seed}
-	fmt.Println("Current Seed Code:", seed)
-
-	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: seedResponseDto, Message: "Get Seed Success"})
-}
-
 func signinHandler(c echo.Context) error {
 	var user User
-	secretKeyBytes := generateRandomSecretKey(32)
+	secretKeyBytes, err := generateRandomSecretKey()
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "Failed to generate secretKeyBytes")
+	}
+
 	totp, err := generateOTP(secretKeyBytes)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, "Failed to generate time-based OTP")

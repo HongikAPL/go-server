@@ -26,8 +26,11 @@ import (
 
 type SigninResponseDto struct {
 	AccessToken string `json:"accessToken"`
-	Otp         string `json:"otp"`
 	Key         []byte `json:"key"`
+}
+
+type SeedResponseDto struct {
+	Seed int64 `json:seed`
 }
 
 type VerifyResponseDto struct {
@@ -64,6 +67,16 @@ func loadEnv() {
 	if err != nil {
 		log.Fatal("Error loading .env file")
 	}
+}
+
+func binaryRead(seed interface{}) error {
+	return binary.Read(rand.Reader, binary.BigEndian, seed)
+}
+
+func generateRandomSeed() (int64, error) {
+	var seed int64
+	err := binaryRead(&seed)
+	return seed, err
 }
 
 func generateRandomSecretKey(length int) []byte {
@@ -175,6 +188,18 @@ func generateToken(username string) (string, error) {
 	return signedToken, nil
 }
 
+func seedHandler(c echo.Context) error {
+	seed, err := generateRandomSeed()
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, "Failed to generate time-based Seed")
+	}
+
+	seedResponseDto := SeedResponseDto{Seed: seed}
+	fmt.Println("Current Seed Code:", seed)
+
+	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: seedResponseDto, Message: "Get Seed Success"})
+}
+
 func signinHandler(c echo.Context) error {
 	var user User
 	secretKeyBytes := generateRandomSecretKey(32)
@@ -199,8 +224,8 @@ func signinHandler(c echo.Context) error {
 			return c.JSON(http.StatusInternalServerError, "Failed to generate JWT token")
 		}
 
-		SigninResponseDto := SigninResponseDto{AccessToken: accessToken, Otp: totp, Key: secretKeyBytes}
-		return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: SigninResponseDto, Message: "Authentication Success"})
+		signinResponseDto := SigninResponseDto{AccessToken: accessToken, Key: secretKeyBytes}
+		return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: signinResponseDto, Message: "Authentication Success"})
 	} else {
 		return echo.NewHTTPError(http.StatusBadRequest, "Authentication failed. Invalid username or password")
 	}
@@ -285,6 +310,7 @@ func main() {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
+	e.GET("/api/auth/seed", seedHandler)
 	e.POST("/api/auth/signin", signinHandler)
 	e.GET("/api/auth/verify", verifyHandler, verifyTokenMiddleware)
 

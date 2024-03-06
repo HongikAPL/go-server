@@ -15,11 +15,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/dgrijalva/jwt-go"
-	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -50,12 +47,8 @@ type User struct {
 	Password string `json:"password"`
 }
 
-type AuthTokenClaims struct {
-	TokenUUID string   `json:"tid"`
-	Username  string   `json:"username"`
-	Name      string   `json:"name"`
-	Role      []string `json:"role"`
-	jwt.StandardClaims
+type VerifyRequestDto struct {
+	Otp string `json:"otp"`
 }
 
 const (
@@ -65,7 +58,8 @@ const (
 )
 
 var (
-	globalSeed int64
+	globalSeed      int64
+	globalSecretKey []byte
 )
 
 func loadEnv() {
@@ -88,7 +82,7 @@ func generateRandomSeed() (int64, error) {
 
 func setGlobalSeed(seed int64) {
 	globalSeed = seed
-	fmt.Println("Current Seed Code:", globalSeed)
+	fmt.Println("seed :", seed)
 }
 
 func generateRandomSecretKey() ([]byte, error) {
@@ -99,23 +93,14 @@ func generateRandomSecretKey() ([]byte, error) {
 	for i := 0; i < len(randomSecretKey); i++ {
 		randomSecretKey[i] = byte(randInstance.Intn(256))
 	}
+	fmt.Println("randomSecretKey :", randomSecretKey)
+	globalSecretKey = randomSecretKey
 
 	return randomSecretKey, nil
 }
 
-func generateOTP(secretKeyBytes []byte) (string, error) {
-	// otpURL, err := totp.Generate(totp.GenerateOpts{
-	// 	Issuer:      "App Name",
-	// 	AccountName: "test@example.com",
-	// 	Secret:      secretKeyBytes,
-	// })
-	// if err != nil {
-	// 	fmt.Println("Error generating TOTP URL:", err)
-	// 	return "", err
-	// }
-
-	// fmt.Println("TOTP URL:\n", otpURL.URL())
-	secretKey := base32.StdEncoding.EncodeToString(secretKeyBytes)
+func generateOTP() (string, error) {
+	secretKey := base32.StdEncoding.EncodeToString(globalSecretKey)
 	secretKey = secretKey[:32]
 
 	fixedTime := time.Unix((time.Now().Unix()/30)*30, 0)
@@ -125,6 +110,8 @@ func generateOTP(secretKeyBytes []byte) (string, error) {
 		fmt.Println("Error generating TOTP code:", err)
 		return "", err
 	}
+
+	fmt.Println("totp :", totp)
 
 	return totp, nil
 }
@@ -180,30 +167,6 @@ func encryptFilesInFolder(key []byte, otp string) error {
 	return nil
 }
 
-func generateToken(username string) (string, error) {
-	secretKey := os.Getenv("SECRET_KEY")
-	expirationTime := time.Now().Add(1 * time.Hour)
-
-	claims := AuthTokenClaims{
-		TokenUUID: uuid.NewString(),
-		Username:  username,
-		Name:      "younggyo",
-		Role:      []string{"user"},
-		StandardClaims: jwt.StandardClaims{
-			ExpiresAt: expirationTime.Unix(),
-		},
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	signedToken, err := token.SignedString([]byte(secretKey))
-
-	if err != nil {
-		return "", err
-	}
-
-	return signedToken, nil
-}
-
 func signinHandler(c echo.Context) error {
 	var user User
 
@@ -222,17 +185,6 @@ func signinHandler(c echo.Context) error {
 			return c.JSON(http.StatusBadRequest, "Failed to generate secretKeyBytes")
 		}
 
-		// totp, err := generateOTP(secretKeyBytes)
-		// if err != nil {
-		// 	return c.JSON(http.StatusBadRequest, "Failed to generate time-based OTP")
-		// }
-
-		// fmt.Println("Current TOTP Code:", totp)
-
-		// if err := encryptFilesInFolder(secretKeyBytes, totp); err != nil {
-		// 	return c.JSON(http.StatusBadRequest, "Error encryption files")
-		// }
-
 		signinResponseDto := SigninResponseDto{Key: secretKeyBytes, Seed: seed}
 		return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: signinResponseDto, Message: "Authentication Success"})
 	} else {
@@ -240,36 +192,23 @@ func signinHandler(c echo.Context) error {
 	}
 }
 
-func verifyTokenMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+func verifyMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		authorizationHeader := c.Request().Header.Get("Authorization")
+		var verifyRequestDto VerifyRequestDto
 
-		if authorizationHeader == "" {
-			return echo.NewHTTPError(http.StatusUnauthorized, "Token not provided")
+		if err := c.Bind(&verifyRequestDto); err != nil {
+			return c.JSON(http.StatusBadRequest, "Invalid request payload")
 		}
 
-		accessToken := strings.Replace(authorizationHeader, "Bearer ", "", 1)
-		authTokenClaims := &AuthTokenClaims{}
-		token, err := jwt.ParseWithClaims(accessToken, authTokenClaims, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("There was an error")
-			}
-			return []byte(os.Getenv("SECRET_KEY")), nil
-		})
-
+		totp, err := generateOTP()
 		if err != nil {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
 		}
 
-		if !token.Valid {
+		if totp != verifyRequestDto.Otp {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Token is not valid")
 		}
 
-		c.Set("user", authTokenClaims)
-		/* 미들웨어에서 저장한 user 사용하는 방법
-		user := c.Get("user").(*AuthTokenClaims)
-		user.Username, user.Name 등등 사용 가능
-		*/
 		return next(c)
 	}
 }
@@ -320,7 +259,7 @@ func main() {
 	e.Use(middleware.Recover())
 
 	e.POST("/api/auth/signin", signinHandler)
-	e.GET("/api/auth/verify", verifyHandler, verifyTokenMiddleware)
+	e.GET("/api/auth/verify", verifyHandler, verifyMiddleware)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

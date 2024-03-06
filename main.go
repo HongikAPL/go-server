@@ -27,12 +27,12 @@ import (
 )
 
 type SigninResponseDto struct {
-	AccessToken string `json:"accessToken"`
-	Key         []byte `json:"key"`
+	Key  []byte `json:"key"`
+	Seed int64  `json:"seed"`
 }
 
 type SeedResponseDto struct {
-	Seed int64 `json:seed`
+	Seed int64 `json:"seed"`
 }
 
 type VerifyResponseDto struct {
@@ -92,12 +92,12 @@ func setGlobalSeed(seed int64) {
 }
 
 func generateRandomSecretKey() ([]byte, error) {
-	mrand.Seed(globalSeed)
+	randSource := mrand.NewSource(globalSeed)
+	randInstance := mrand.New(randSource)
 	randomSecretKey := make([]byte, 32)
 
-	_, err := crand.Read(randomSecretKey)
-	if err != nil {
-		return nil, err
+	for i := 0; i < len(randomSecretKey); i++ {
+		randomSecretKey[i] = byte(randInstance.Intn(256))
 	}
 
 	return randomSecretKey, nil
@@ -127,25 +127,6 @@ func generateOTP(secretKeyBytes []byte) (string, error) {
 	}
 
 	return totp, nil
-}
-
-func seedHandler(c echo.Context) error {
-	seed, err := generateRandomSeed()
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, "Failed to generate time-based Seed")
-	}
-
-	secretKeyBytes, err := generateRandomSecretKey()
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, "Failed to generate time-based Seed")
-	}
-
-	totp, err := generateOTP(secretKeyBytes)
-	fmt.Println("totp :", totp)
-
-	seedResponseDto := SeedResponseDto{Seed: seed}
-
-	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: seedResponseDto, Message: "Get Seed Success"})
 }
 
 func encrypt(data []byte, key []byte) ([]byte, error) {
@@ -225,33 +206,34 @@ func generateToken(username string) (string, error) {
 
 func signinHandler(c echo.Context) error {
 	var user User
-	secretKeyBytes, err := generateRandomSecretKey()
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, "Failed to generate secretKeyBytes")
-	}
-
-	totp, err := generateOTP(secretKeyBytes)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, "Failed to generate time-based OTP")
-	}
-
-	fmt.Println("Current TOTP Code:", totp)
-
-	if err := encryptFilesInFolder(secretKeyBytes, totp); err != nil {
-		return c.JSON(http.StatusBadRequest, "Error encryption files")
-	}
 
 	if err := c.Bind(&user); err != nil {
 		return c.JSON(http.StatusBadRequest, "Invalid request payload")
 	}
 
 	if user.Username == validUsername && user.Password == validPassword {
-		accessToken, err := generateToken(user.Username)
+		seed, err := generateRandomSeed()
 		if err != nil {
-			return c.JSON(http.StatusInternalServerError, "Failed to generate JWT token")
+			return c.JSON(http.StatusBadRequest, "Failed to generate time-based Seed")
 		}
 
-		signinResponseDto := SigninResponseDto{AccessToken: accessToken, Key: secretKeyBytes}
+		secretKeyBytes, err := generateRandomSecretKey()
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, "Failed to generate secretKeyBytes")
+		}
+
+		// totp, err := generateOTP(secretKeyBytes)
+		// if err != nil {
+		// 	return c.JSON(http.StatusBadRequest, "Failed to generate time-based OTP")
+		// }
+
+		// fmt.Println("Current TOTP Code:", totp)
+
+		// if err := encryptFilesInFolder(secretKeyBytes, totp); err != nil {
+		// 	return c.JSON(http.StatusBadRequest, "Error encryption files")
+		// }
+
+		signinResponseDto := SigninResponseDto{Key: secretKeyBytes, Seed: seed}
 		return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: signinResponseDto, Message: "Authentication Success"})
 	} else {
 		return echo.NewHTTPError(http.StatusBadRequest, "Authentication failed. Invalid username or password")
@@ -337,7 +319,6 @@ func main() {
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
-	e.GET("/api/auth/seed", seedHandler)
 	e.POST("/api/auth/signin", signinHandler)
 	e.GET("/api/auth/verify", verifyHandler, verifyTokenMiddleware)
 

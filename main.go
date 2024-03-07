@@ -60,6 +60,7 @@ const (
 var (
 	globalSeed      int64
 	globalSecretKey []byte
+	globalOtp       string
 )
 
 func loadEnv() {
@@ -116,8 +117,8 @@ func generateOTP() (string, error) {
 	return totp, nil
 }
 
-func encrypt(data []byte, key []byte) ([]byte, error) {
-	block, err := aes.NewCipher(key)
+func encrypt(data []byte) ([]byte, error) {
+	block, err := aes.NewCipher(globalSecretKey)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +135,7 @@ func encrypt(data []byte, key []byte) ([]byte, error) {
 	return ciphertext, nil
 }
 
-func encryptFilesInFolder(key []byte, otp string) error {
+func encryptFilesInFolder() error {
 	files, err := ioutil.ReadDir(folderPath)
 	if err != nil {
 		return err
@@ -147,12 +148,12 @@ func encryptFilesInFolder(key []byte, otp string) error {
 			return err
 		}
 
-		encryptedData, err := encrypt(data, key)
+		encryptedData, err := encrypt(data)
 		if err != nil {
 			return err
 		}
 
-		newFolderPath := filepath.Join(folderPath, "/", otp)
+		newFolderPath := filepath.Join(folderPath, "/", globalOtp)
 		if err := os.Mkdir(newFolderPath, os.ModePerm); err != nil {
 			return err
 		}
@@ -209,6 +210,8 @@ func verifyMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 			return echo.NewHTTPError(http.StatusUnauthorized, "Token is not valid")
 		}
 
+		globalOtp = totp
+
 		return next(c)
 	}
 }
@@ -240,7 +243,11 @@ func generateNfsUrl() (string, error) {
 func verifyHandler(c echo.Context) error {
 	nfsUrl, err := generateNfsUrl()
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, err)
+		return c.JSON(http.StatusInternalServerError, "Error generation NfsUrl")
+	}
+
+	if err := encryptFilesInFolder(); err != nil {
+		return c.JSON(http.StatusBadRequest, "Error encryption files")
 	}
 
 	verifyResponseDto := VerifyResponseDto{
@@ -248,6 +255,18 @@ func verifyHandler(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: verifyResponseDto, Message: "NFS URL 전송 성공"})
+}
+
+func deleteHandler(c echo.Context) error {
+	otp := c.Param("otp")
+	folderPath := fmt.Sprintf("./nfs_shared/%s", otp)
+	fmt.Println("otp", otp)
+
+	err := os.RemoveAll(folderPath)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, "Error deleting link")
+	}
+	return c.JSON(http.StatusOK, ApiResponse{Status: http.StatusOK, Data: nil, Message: "NFS URL Unlink 성공"})
 }
 
 func main() {
@@ -259,7 +278,8 @@ func main() {
 	e.Use(middleware.Recover())
 
 	e.POST("/api/auth/signin", signinHandler)
-	e.GET("/api/auth/verify", verifyHandler, verifyMiddleware)
+	e.POST("/api/auth/verify", verifyHandler, verifyMiddleware)
+	e.DELETE("/api/auth/link/:otp", deleteHandler)
 
 	e.Logger.Fatal(e.Start(":8080"))
 }

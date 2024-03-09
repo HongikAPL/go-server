@@ -259,10 +259,10 @@ func verifyHandler(c echo.Context) error {
 
 func deleteHandler(c echo.Context) error {
 	otp := c.Param("otp")
-	folderPath := fmt.Sprintf("./nfs_shared/%s", otp)
-	fmt.Println("otp", otp)
+	removePath := filepath.Join(folderPath, otp)
+	fmt.Println("otp", removePath)
 
-	err := os.RemoveAll(folderPath)
+	err := os.RemoveAll(removePath)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, "Error deleting link")
 	}

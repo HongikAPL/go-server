@@ -54,7 +54,7 @@ type VerifyRequestDto struct {
 const (
 	validUsername = "test"
 	validPassword = "test"
-	folderPath    = "./nfs_shared"
+	folderPath    = "/mnt/nfs_share"
 )
 
 var (

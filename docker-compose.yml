@@ -8,8 +8,4 @@ services:
     ports:
       - "8080:8080"
     restart: always
-    volumes:
-      - type: bind
-        source: /Users/younggyo/Documents/mount
-        target: /exports
         
